@@ -767,10 +767,7 @@ def detect_h264_level(fname, vstream=0):
 
         if ffprobe.poll() == None:
             kill(ffprobe)
-            vInfo['Supported'] = False
-            if cache:
-                info_cache[inFile] = (mtime, vInfo)
-            return vInfo
+            return 0
     else:
         ffprobe.wait()
 
