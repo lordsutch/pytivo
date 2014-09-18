@@ -570,6 +570,11 @@ def tivo_compatible_video(vInfo, tsn, mime=''):
             message = (False, '%s kbps not supported' % vInfo['kbps'])
             break
 
+        # According to https://code.google.com/p/streambaby/wiki/video_compatibility, level 4.1 is the maximum supported on Series 4.
+        if codec == 'h264' and int(vInfo['vH264Level']) > 41:
+            message = (False, 'h264 level %s too high' % vInfo['vH264Level'])
+            break
+        
         if config.isHDtivo(tsn):
             # HD Tivo detected, skipping remaining tests.
             break
@@ -741,6 +746,44 @@ def tivo_compatible(inFile, tsn='', mime=''):
                                            message[1], inFile))
     return message
 
+def detect_h264_level(fname, vstream=0):
+    ffprobe_path = config.get_bin('ffprobe')
+    if not ffprobe_path:
+        return 0
+
+    cmd = [ffprobe_path, '-of', 'flat', '-show_streams', '-i', fname]
+    # Windows and other OS buffer 4096 and ffprobe can output more than that.
+    out_tmp = tempfile.TemporaryFile()
+    ffprobe = subprocess.Popen(cmd, stdout=out_tmp, stderr=subprocess.PIPE,
+                               stdin=subprocess.PIPE)
+
+    # wait configured # of seconds: if ffprobe is not back give up
+    limit = config.getFFmpegWait()
+    if limit:
+        for i in xrange(limit * 20):
+            time.sleep(.05)
+            if not ffprobe.poll() == None:
+                break
+
+        if ffprobe.poll() == None:
+            kill(ffprobe)
+            vInfo['Supported'] = False
+            if cache:
+                info_cache[inFile] = (mtime, vInfo)
+            return vInfo
+    else:
+        ffprobe.wait()
+
+    out_tmp.seek(0)
+    output = out_tmp.read()
+    out_tmp.close()
+    debug('ffprobe output=%s' % repr(output))
+
+    match = re.search(r'streams\.stream\.\d+\.level=(\d+)', output)
+    if match:
+        return int(match.group(1))
+    return 0
+        
 def video_info(inFile, cache=True):
     vInfo = dict()
     fname = unicode(inFile, 'utf-8')
@@ -884,6 +927,11 @@ def video_info(inFile, cache=True):
     else:
         vInfo['millisecs'] = 0
 
+    # get h264 level
+    vInfo['vH264Level'] = 0  # Assume it's OK unless proven otherwise
+    if vInfo['vCodec'] == 'h264':
+        vInfo['vH264Level'] = detect_h264_level(fname)
+                    
     # get bitrate of source for tivo compatibility test.
     rezre = re.compile(r'.*bitrate: (.+) (?:kb/s).*')
     x = rezre.search(output)
