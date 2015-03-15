@@ -541,6 +541,9 @@ def tivo_compatible_video(vInfo, tsn, mime=''):
             if codec != 'h264':
                 message = (False, 'vCodec %s not compatible' % codec)
 
+            # According to https://code.google.com/p/streambaby/wiki/video_compatibility, level 4.1 is the maximum supported on Series 4.
+            if int(vInfo['vH264Level']) > 41:
+                message = (False, 'h264 level %s too high' % vInfo['vH264Level'])
             break
 
         if mime == 'video/bif':
@@ -570,11 +573,6 @@ def tivo_compatible_video(vInfo, tsn, mime=''):
             message = (False, '%s kbps not supported' % vInfo['kbps'])
             break
 
-        # According to https://code.google.com/p/streambaby/wiki/video_compatibility, level 4.1 is the maximum supported on Series 4.
-        if codec == 'h264' and int(vInfo['vH264Level']) > 41:
-            message = (False, 'h264 level %s too high' % vInfo['vH264Level'])
-            break
-        
         if config.isHDtivo(tsn):
             # HD Tivo detected, skipping remaining tests.
             break
