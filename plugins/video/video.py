@@ -324,7 +324,18 @@ class BaseVideo(Plugin):
     def __est_size(self, full_path, tsn='', mime=''):
         # Size is estimated by taking audio and video bit rate adding 2%
 
-        if transcode.tivo_compatible(full_path, tsn, mime)[0]:
+        vInfo = transcode.video_info(full_path)
+        if not mime:
+            compat = False
+            for mimet in ['video/mp4', 'video/bip', 'video/mpeg',
+                              'video/x-tivo-mpeg-ts']:
+                compat = transcode.tivo_compatible_video(vInfo, tsn, mimet)[0]
+                if compat:
+                    break
+        else:
+            compat = transcode.tivo_compatible_video(vInfo, tsn, mime)[0]
+            
+        if compat:
             return os.path.getsize(unicode(full_path, 'utf-8'))
         else:
             # Must be re-encoded
