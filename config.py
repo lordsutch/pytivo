@@ -57,11 +57,11 @@ def reset():
     for section in config.sections():
         if section.startswith('_tivo_'):
             tsn = section[6:]
-            if tsn.upper() not in ['SD', 'HD']:
+            if tsn.upper() not in ['SD', 'HD', '4K']:
                 tivos_found = True
                 tivos[tsn] = Bdict(config.items(section))
 
-    for section in ['Server', '_tivo_SD', '_tivo_HD']:
+    for section in ['Server', '_tivo_SD', '_tivo_HD', '_tivo_4K']:
         if not config.has_section(section):
             config.add_section(section)
 
@@ -248,26 +248,17 @@ def getFFmpegWait():
     else:
         return 0
 
-def getFFmpegTemplate(tsn):
-    tmpl = get_tsn('ffmpeg_tmpl', tsn, True)
-    if tmpl:
-        return tmpl
-    return '%(video_codec)s %(video_fps)s %(video_br)s %(max_video_br)s \
-            %(buff_size)s %(aspect_ratio)s %(audio_br)s \
-            %(audio_fr)s %(audio_ch)s %(audio_codec)s %(audio_lang)s \
-            %(ffmpeg_pram)s %(format)s'
-
 def getFFmpegPrams(tsn):
     return get_tsn('ffmpeg_pram', tsn, True)
 
-def isHDtivo(tsn):  # tsn's of High Definition Tivo's
+def isHDtivo(tsn):  # TSNs of High Definition TiVos
     return bool(tsn and tsn[0] >= '6' and tsn[:3] != '649')
 
-def has_ts_flag():
-    try:
-        return config.getboolean('Server', 'ts')
-    except:
-        return False
+def is4Ktivo(tsn):  # TSNs of 4K TiVos
+    return bool(tsn[:3] in ('849', '8F9'))
+
+def get_ts_flag():
+    return get_server('ts', 'auto').lower()
 
 def is_ts_capable(tsn):  # tsn's of Tivos that support transport streams
     return bool(tsn and (tsn[0] >= '7' or tsn.startswith('663')))
@@ -298,16 +289,16 @@ def nearestTivoWidth(width):
     return nearest(width, getValidWidths())
 
 def getTivoHeight(tsn):
-    height = get_tsn('height', tsn)
-    if height:
-        return nearestTivoHeight(int(height))
-    return [480, 1080][isHDtivo(tsn)]
+    if is4Ktivo(tsn):
+        return 2160
+    else:
+        return [480, 1080][isHDtivo(tsn)]
 
 def getTivoWidth(tsn):
-    width = get_tsn('width', tsn)
-    if width:
-        return nearestTivoWidth(int(width))
-    return [544, 1920][isHDtivo(tsn)]
+    if is4Ktivo(tsn):
+        return 3840
+    else:
+        return [544, 1920][isHDtivo(tsn)]
 
 def _trunc64(i):
     return max(int(strtod(i)) / 64000, 1) * 64
@@ -327,7 +318,10 @@ def getVideoBR(tsn=None):
     rate = get_tsn('video_br', tsn)
     if rate:
         return _k(rate)
-    return ['4096K', '16384K'][isHDtivo(tsn)]
+    if is4Ktivo(tsn):
+        return getMaxVideoBR(tsn)
+    else:
+        return ['4096K', '16384K'][isHDtivo(tsn)]
 
 def getMaxVideoBR(tsn=None):
     rate = get_tsn('max_video_br', tsn)
@@ -339,7 +333,10 @@ def getBuffSize(tsn=None):
     size = get_tsn('bufsize', tsn)
     if size:
         return _k(size)
-    return ['1024k', '4096k'][isHDtivo(tsn)]
+    if is4Ktivo(tsn):
+        return '8192k'
+    else:
+        return ['1024k', '4096k'][isHDtivo(tsn)]
 
 def getMaxAudioBR(tsn=None):
     rate = get_tsn('max_audio_br', tsn)
@@ -349,7 +346,10 @@ def getMaxAudioBR(tsn=None):
     return 448
 
 def get_section(tsn):
-    return ['_tivo_SD', '_tivo_HD'][isHDtivo(tsn)]
+    if is4Ktivo(tsn):
+        return '_tivo_4K'
+    else:
+        return ['_tivo_SD', '_tivo_HD'][isHDtivo(tsn)]
 
 def get_tsn(name, tsn=None, raw=False):
     try:

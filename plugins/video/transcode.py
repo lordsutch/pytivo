@@ -54,25 +54,33 @@ def debug(msg):
     logger.debug(msg)
 
 def transcode(isQuery, inFile, outFile, tsn='', mime='', thead=''):
-    settings = {'video_codec': select_videocodec(inFile, tsn, mime),
-                'video_br': select_videobr(inFile, tsn),
-                'video_fps': select_videofps(inFile, tsn),
-                'max_video_br': select_maxvideobr(tsn),
-                'buff_size': select_buffsize(tsn),
-                'aspect_ratio': ' '.join(select_aspect(inFile, tsn)),
-                'audio_br': select_audiobr(tsn),
-                'audio_fr': select_audiofr(inFile, tsn),
-                'audio_ch': select_audioch(inFile, tsn),
-                'audio_codec': select_audiocodec(isQuery, inFile, tsn),
-                'audio_lang': select_audiolang(inFile, tsn),
-                'ffmpeg_pram': select_ffmpegprams(tsn),
-                'format': select_format(tsn, mime)}
+    vcodec = select_videocodec(inFile, tsn, mime)
 
+    settings = select_buffsize(tsn) + vcodec
+    if not vcodec[1] == 'copy':
+        settings += (select_videobr(inFile, tsn) +
+                     select_maxvideobr(tsn) +
+                     select_videofps(inFile, tsn) +
+                     select_aspect(inFile, tsn))
+
+    acodec = select_audiocodec(isQuery, inFile, tsn)
+    settings += acodec
+    if not acodec[1] == 'copy':
+        settings += (select_audiobr(tsn) +
+                     select_audiofr(inFile, tsn) +
+                     select_audioch(inFile, tsn))
+
+    settings += [select_audiolang(inFile, tsn),
+                 select_ffmpegprams(tsn)]
+
+    settings += select_format(tsn, mime)
+
+    settings = ' '.join(settings).split()
     if isQuery:
         return settings
 
     ffmpeg_path = config.get_bin('ffmpeg')
-    cmd_string = config.getFFmpegTemplate(tsn) % settings
+
     fname = unicode(inFile, 'utf-8')
     if mswindows:
         fname = fname.encode('cp1252')
@@ -87,12 +95,12 @@ def transcode(isQuery, inFile, outFile, tsn='', mime='', thead=''):
             cmd = ''
             ffmpeg = tivodecode
         else:
-            cmd = [ffmpeg_path, '-i', '-'] + cmd_string.split()
+            cmd = [ffmpeg_path, '-i', '-'] + settings
             ffmpeg = subprocess.Popen(cmd, stdin=tivodecode.stdout,
                                       stdout=subprocess.PIPE,
                                       bufsize=(512 * 1024))
     else:
-        cmd = [ffmpeg_path, '-i', fname] + cmd_string.split()
+        cmd = [ffmpeg_path, '-i', fname] + settings
         ffmpeg = subprocess.Popen(cmd, bufsize=(512 * 1024),
                                   stdout=subprocess.PIPE)
 
@@ -203,7 +211,7 @@ def cleanup(inFile):
 
 def select_audiocodec(isQuery, inFile, tsn='', mime=''):
     if inFile[-5:].lower() == '.tivo':
-        return '-acodec copy'
+        return ['-c:a', 'copy']
     vInfo = video_info(inFile)
     codectype = vInfo['vCodec']
     # Default, compatible with all TiVo's
@@ -238,12 +246,10 @@ def select_audiocodec(isQuery, inFile, tsn='', mime=''):
             codec = 'copy'
         if vInfo['aCodec'] != 'ac3' and (aCh == None or aCh > 2):
             codec = 'ac3'
-    copy_flag = config.get_tsn('copy_ts', tsn)
-    copyts = ' -copyts'
-    if ((codec == 'copy' and codectype == 'mpeg2video' and not copy_flag) or
-        (copy_flag and copy_flag.lower() == 'false')):
-        copyts = ''
-    return '-acodec ' + codec + copyts
+    val = ['-c:a', codec]
+    if not (codec == 'copy' and codectype == 'mpeg2video'):
+        val.append('-copyts')
+    return val
 
 def select_audiofr(inFile, tsn):
     freq = '48000'  # default
@@ -251,20 +257,14 @@ def select_audiofr(inFile, tsn):
     if vInfo['aFreq'] == '44100':
         # compatible frequency
         freq = vInfo['aFreq']
-    audio_fr = config.get_tsn('audio_fr', tsn)
-    if audio_fr != None:
-        freq = audio_fr
-    return '-ar ' + freq
+    return ['-ar', freq]
 
 def select_audioch(inFile, tsn):
-    ch = config.get_tsn('audio_ch', tsn)
-    if ch:
-        return '-ac ' + ch
     # AC-3 max channels is 5.1
     if video_info(inFile)['aCh'] > 6:
         debug('Too many audio channels for AC-3, using 5.1 instead')
-        return '-ac 6'
-    return ''
+        return ['-ac', '6']
+    return []
 
 def select_audiolang(inFile, tsn):
     vInfo = video_info(inFile)
@@ -308,27 +308,28 @@ def select_audiolang(inFile, tsn):
 
 def select_videofps(inFile, tsn):
     vInfo = video_info(inFile)
-    fps = '-r 29.97'  # default
+    fps = ['-r', '29.97']  # default
     if config.isHDtivo(tsn) and vInfo['vFps'] in GOOD_MPEG_FPS:
-        fps = ' '
-    video_fps = config.get_tsn('video_fps', tsn)
-    if video_fps != None:
-        fps = '-r ' + video_fps
+        fps = []
     return fps
 
 def select_videocodec(inFile, tsn, mime=''):
+    codec = ['-c:v']
     vInfo = video_info(inFile)
     if tivo_compatible_video(vInfo, tsn, mime)[0]:
-        codec = 'copy'
-        if (mime == 'video/x-tivo-mpeg-ts' and
-            vInfo.get('vCodec', '') == 'h264'):
-            codec += ' -bsf h264_mp4toannexb'
+        codec.append('copy')
+        if (mime == 'video/x-tivo-mpeg-ts'):
+            org_codec = vInfo.get('vCodec', '')
+            if org_codec == 'h264':
+                codec += ['-bsf', 'h264_mp4toannexb']
+            elif org_codec == 'hevc':
+                codec += ['-bsf', 'hevc_mp4toannexb']
     else:
-        codec = 'mpeg2video -pix_fmt yuv420p'  # default
-    return '-vcodec ' + codec
+        codec += ['mpeg2video', '-pix_fmt', 'yuv420p']  # default
+    return codec
 
 def select_videobr(inFile, tsn, mime=''):
-    return '-b ' + str(select_videostr(inFile, tsn, mime) / 1000) + 'k'
+    return ['-b:v', str(select_videostr(inFile, tsn, mime) / 1000) + 'k']
 
 def select_videostr(inFile, tsn, mime=''):
     vInfo = video_info(inFile)
@@ -346,13 +347,13 @@ def select_videostr(inFile, tsn, mime=''):
     return video_str
 
 def select_audiobr(tsn):
-    return '-ab ' + config.getAudioBR(tsn)
+    return ['-b:a', config.getAudioBR(tsn)]
 
 def select_maxvideobr(tsn):
-    return '-maxrate ' + config.getMaxVideoBR(tsn)
+    return ['-maxrate', config.getMaxVideoBR(tsn)]
 
 def select_buffsize(tsn):
-    return '-bufsize ' + config.getBuffSize(tsn)
+    return ['-bufsize', config.getBuffSize(tsn)]
 
 def select_ffmpegprams(tsn):
     params = config.getFFmpegPrams(tsn)
@@ -365,7 +366,7 @@ def select_format(tsn, mime):
         fmt = 'mpegts'
     else:
         fmt = 'vob'
-    return '-f %s -' % fmt
+    return ['-f', fmt, '-']
 
 def pad_TB(TIVO_WIDTH, TIVO_HEIGHT, multiplier, vInfo):
     endHeight = int(((TIVO_WIDTH * vInfo['vHeight']) /
@@ -537,8 +538,9 @@ def tivo_compatible_video(vInfo, tsn, mime=''):
     message = (True, '')
     while True:
         codec = vInfo.get('vCodec', '')
+        is4k = config.is4Ktivo(tsn) and codec == 'hevc'
         if mime == 'video/mp4':
-            if codec != 'h264':
+            if not (is4k or codec == 'h264'):
                 message = (False, 'vCodec %s not compatible' % codec)
 
             # According to https://code.google.com/p/streambaby/wiki/video_compatibility, level 4.1 is the maximum supported on Series 4.
@@ -553,7 +555,7 @@ def tivo_compatible_video(vInfo, tsn, mime=''):
             break
 
         if mime == 'video/x-tivo-mpeg-ts':
-            if codec not in ('h264', 'mpeg2video'):
+            if not (is4k or codec in ('h264', 'mpeg2video')):
                 message = (False, 'vCodec %s not compatible' % codec)
 
             break
@@ -685,22 +687,17 @@ def mp4_remux(inFile, basename, tsn=''):
         fname = fname.encode('cp1252')
         oname = oname.encode('cp1252')
 
-    settings = {'video_codec': '-vcodec copy',
-            'video_br': select_videobr(inFile, tsn),
-            'video_fps': select_videofps(inFile, tsn),
-            'max_video_br': select_maxvideobr(tsn),
-            'buff_size': select_buffsize(tsn),
-            'aspect_ratio': ' '.join(select_aspect(inFile, tsn)),
-            'audio_br': select_audiobr(tsn),
-            'audio_fr': select_audiofr(inFile, tsn),
-            'audio_ch': select_audioch(inFile, tsn),
-            'audio_codec': select_audiocodec(False, inFile, tsn, 'video/mp4'),
-            'audio_lang': select_audiolang(inFile, tsn),
-            'ffmpeg_pram': select_ffmpegprams(tsn),
-            'format': '-f mp4'}
+    acodec = select_audiocodec(False, inFile, tsn, 'video/mp4')
+    settings = select_buffsize(tsn) + ['-c:v', 'copy'] + acodec
+    if not acodec[1] == 'copy':
+        settings += (select_audiobr(tsn) +
+                     select_audiofr(inFile, tsn) +
+                     select_audioch(inFile, tsn))
+    settings += [select_audiolang(inFile, tsn),
+                 select_ffmpegprams(tsn),
+                 '-f', 'mp4']
 
-    cmd_string = config.getFFmpegTemplate(tsn) % settings
-    cmd = [ffmpeg_path, '-i', fname] + cmd_string.split() + [oname]
+    cmd = [ffmpeg_path, '-i', fname] + ' '.join(settings).split() + [oname]
 
     debug('transcoding to tivo model ' + tsn[:3] + ' using ffmpeg command:')
     debug(' '.join(cmd))
@@ -793,7 +790,7 @@ def video_info(inFile, cache=True):
     ffmpeg_path = config.get_bin('ffmpeg')
     if not ffmpeg_path:
         if os.path.splitext(inFile)[1].lower() not in ['.mpg', '.mpeg',
-                                                       '.vob', '.tivo']:
+                                                       '.vob', '.tivo', '.ts']:
             vInfo['Supported'] = False
         vInfo.update({'millisecs': 0, 'vWidth': 704, 'vHeight': 480,
                       'rawmeta': {}})
@@ -1025,7 +1022,7 @@ def video_info(inFile, cache=True):
     return vInfo
 
 def audio_check(inFile, tsn):
-    cmd_string = ('-y -vcodec mpeg2video -r 29.97 -b 1000k -acodec copy ' +
+    cmd_string = ('-y -c:v mpeg2video -r 29.97 -b:v 1000k -c:a copy ' +
                   select_audiolang(inFile, tsn) + ' -t 00:00:01 -f vob -')
     fname = unicode(inFile, 'utf-8')
     if mswindows:

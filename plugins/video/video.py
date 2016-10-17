@@ -45,6 +45,9 @@ EXTENSIONS = """.tivo .mpg .avi .wmv .mov .flv .f4v .vob .mp4 .m4v .mkv
 .rts .scm .smv .ssm .svi .vdo .vfw .vid .viv .vivo .vp6 .vp7 .vro .webm
 .wm .wmd .wtv .yuv""".split()
 
+LIKELYTS = """.ts .tp .trp .3g2 .3gp .3gp2 .3gpp .m2t .m2ts .mts .mp4
+.m4v .flv .mkv .mov .wtv .dvr-ms .webm""".split()
+
 use_extensions = True
 try:
     assert(config.get_bin('ffmpeg'))
@@ -358,7 +361,7 @@ class BaseVideo(Plugin):
         if config.getDebug() and 'vHost' not in data:
             compatible, reason = transcode.tivo_compatible(full_path, tsn, mime)
             if compatible:
-                transcode_options = {}
+                transcode_options = []
             else:
                 transcode_options = transcode.transcode(True, full_path,
                                                         '', tsn, mime)
@@ -368,7 +371,7 @@ class BaseVideo(Plugin):
                 ["%s=%s" % (k, v)
                  for k, v in sorted(vInfo.items(), reverse=True)] +
                 ['TRANSCODE OPTIONS: '] +
-                ["%s" % (v) for k, v in transcode_options.items()] +
+                transcode_options +
                 ['SOURCE FILE: ', os.path.basename(full_path)]
             )
 
@@ -417,11 +420,16 @@ class BaseVideo(Plugin):
 
         container = handler.container
         force_alpha = container.getboolean('force_alpha')
+        ar = container.get('allow_recurse', 'auto').lower()
+        if ar == 'auto':
+            allow_recurse = not tsn or tsn[0] < '7'
+        else:
+            allow_recurse = ar in ('1', 'yes', 'true', 'on')
         use_html = query.get('Format', [''])[0].lower() == 'text/html'
 
         files, total, start = self.get_files(handler, query,
                                              self.video_file_filter,
-                                             force_alpha)
+                                             force_alpha, allow_recurse)
 
         videos = []
         local_base_path = self.get_local_base_path(handler, query)
@@ -488,15 +496,19 @@ class BaseVideo(Plugin):
 
     def use_ts(self, tsn, file_path):
         if config.is_ts_capable(tsn):
-            if file_path[-5:].lower() == '.tivo':
+            ext = os.path.splitext(file_path)[1].lower()
+            if ext == '.tivo':
                 try:
                     flag = file(file_path).read(8)
                 except:
                     return False
                 if ord(flag[7]) & 0x20:
                     return True
-            elif config.has_ts_flag():
-                return True
+            else:
+                opt = config.get_ts_flag()
+                if ((opt == 'auto' and ext in LIKELYTS) or
+                    (opt in ['true', 'yes', 'on'])):
+                    return True
 
         return False
 
@@ -515,6 +527,7 @@ class BaseVideo(Plugin):
             t.get_tv = metadata.get_tv
             t.get_mpaa = metadata.get_mpaa
             t.get_stars = metadata.get_stars
+            t.get_color = metadata.get_color
             details = str(t)
             self.tvbus_cache[(tsn, file_path)] = details
         return details
@@ -594,7 +607,7 @@ class VideoDetails(DictMixin):
             'displayMajorNumber' : '0',
             'displayMinorNumber' : '0',
             'isEpisode' : 'true',
-            'colorCode' : ('COLOR', '4'),
+            'colorCode' : '4',
             'showType' : ('SERIES', '5')
         }
         if key in defaults:
