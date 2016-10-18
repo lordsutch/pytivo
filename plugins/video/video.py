@@ -327,8 +327,11 @@ class BaseVideo(Plugin):
         vInfo = transcode.video_info(full_path)
         if not mime:
             compat = False
-            for mimet in ['video/mp4', 'video/bip', 'video/mpeg',
-                              'video/x-tivo-mpeg-ts']:
+            mimetypes = ['video/x-tivo-mpeg']
+            if self.use_ts(tsn, full_path):
+                mimetypes = ['video/x-tivo-mpeg', 'video/x-tivo-mpeg-ts']
+            
+            for mimet in mimetypes:
                 compat = transcode.tivo_compatible_video(vInfo, tsn, mimet)[0]
                 if compat:
                     break
@@ -336,7 +339,7 @@ class BaseVideo(Plugin):
             compat = transcode.tivo_compatible_video(vInfo, tsn, mime)[0]
             
         if compat:
-            return os.path.getsize(unicode(full_path, 'utf-8'))
+            return int(os.path.getsize(unicode(full_path, 'utf-8'))*1.1)
         else:
             # Must be re-encoded
             audioBPS = config.getMaxAudioBR(tsn) * 1000
